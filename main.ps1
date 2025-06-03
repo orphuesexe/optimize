@@ -161,7 +161,8 @@ if (!$result) { Write-Error "[-] Failed to create process"; exit }
 
 # Get base address and context
 $ctx = New-Object Native+CONTEXT64
-$ctx.ContextFlags = 0x100000 | 0x1F  # CONTEXT_ALL
+$ctx.ContextFlags = 0x100000 -bor 0x1F
+  # CONTEXT_ALL
 [Native]::GetThreadContext($pi.hThread, [ref]$ctx) | Out-Null
 
 $buffer = New-Object byte[] 8
