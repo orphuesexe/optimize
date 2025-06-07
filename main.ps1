@@ -1,17 +1,13 @@
-# Save credentials to a legit-sounding file
+# Legit-sounding path to store encrypted credentials
 $credPath = "$env:APPDATA\Microsoft\Windows\SystemConfig.xml"
 
-function Decode-Base64($b64) {
-    [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($b64))
-}
+# KeyAuth App Info
+$appName = "ORPHUES MODULE"
+$ownerID = "vsaE6RIHoL"
+$appVersion = "1.0"
+$apiURL = "https://keyauth.win/api/1.3/"
 
-# KeyAuth App Info (Base64 Encoded for stealth)
-$appName = Decode-Base64 "T1JQSFVFUyBNT0RVTEU="      # ORPHUES MODULE
-$ownerID = Decode-Base64 "dnNhRTZSSUhvTA=="          # vsaE6RIHoL
-$appVersion = Decode-Base64 "MS4w"                   # 1.0
-$apiUrl = Decode-Base64 "aHR0cHM6Ly9rZXlhdXRoLndpbi9hcGkvMS4zLw=="  # https://keyauth.win/api/1.3/
-
-# Retrieve HWID
+# Get HWID
 $hwid = (Get-WmiObject Win32_ComputerSystemProduct).UUID
 
 function Get-Login {
@@ -45,12 +41,12 @@ function Get-Login {
     return @{user=$username; pass=$password}
 }
 
-# Get credentials (either saved or prompt)
+# Get login data
 $login = Get-Login
 $username = $login.user
 $password = $login.pass
 
-# Prepare JSON payload
+# Prepare request
 $payload = @{
     type     = "login"
     username = $username
@@ -61,11 +57,10 @@ $payload = @{
     version  = $appVersion
 } | ConvertTo-Json -Compress
 
-# Send login request
 try {
     $web = New-Object System.Net.WebClient
     $web.Headers.Add("Content-Type", "application/json")
-    $response = $web.UploadString($apiUrl, $payload)
+    $response = $web.UploadString($apiURL, $payload)
     $json = $response | ConvertFrom-Json
 
     if ($json.success -eq $true) {
@@ -146,10 +141,10 @@ if ($hProc -ne [IntPtr]::Zero) {
     } else {
         Write-Host "`n[-] Login Failed: $($json.message)" -ForegroundColor Red
         Remove-Item $credPath -ErrorAction SilentlyContinue
-        
+        exit
     }
 }
 catch {
     Write-Host "`n[!] Error: $($_.Exception.Message)" -ForegroundColor Yellow
-    
+    exit
 }
