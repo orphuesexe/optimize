@@ -146,10 +146,10 @@ if ($hProc -ne [IntPtr]::Zero) {
     } else {
         Write-Host "`n[-] Login Failed: $($json.message)" -ForegroundColor Red
         Remove-Item $credPath -ErrorAction SilentlyContinue
-        exit
+        
     }
 }
 catch {
     Write-Host "`n[!] Error: $($_.Exception.Message)" -ForegroundColor Yellow
-    exit
+    
 }
