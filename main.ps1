@@ -1,3 +1,89 @@
+# Path to save encrypted credentials - legit Windows folder & filename
+$credFile = "$env:APPDATA\Microsoft\Windows\SystemConfig.xml"
+
+# Create folder if it doesn't exist
+$folder = Split-Path $credFile
+if (-not (Test-Path $folder)) {
+    New-Item -ItemType Directory -Path $folder -Force | Out-Null
+}
+
+# Base64 encoded API URL for KeyAuth v1.3
+$enc_url = "aHR0cHM6Ly9rZXlhdXRoLndpbi9hcGkvMS4zLw=="
+$url = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($enc_url))
+
+# Your KeyAuth credentials encoded in Base64
+$enc_appName = "T1JQSFVFUyBNT0RVTEU="       # ORPHUES MODULE
+$enc_ownerId = "dnNhRTZSSUhvTA=="           # vsaE6RIHoL
+$enc_appVersion = "MS4w"                     # 1.0
+
+function Decode-Base64($encoded) {
+    return [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($encoded))
+}
+
+$appName = Decode-Base64 $enc_appName
+$ownerId = Decode-Base64 $enc_ownerId
+$appVersion = Decode-Base64 $enc_appVersion
+
+function Get-Credentials {
+    if (Test-Path $credFile) {
+        try {
+            $cred = Import-Clixml -Path $credFile
+            $username = $cred.UserName
+            $passwordSecure = $cred.Password
+            $ptr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($passwordSecure)
+            $passwordPlain = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
+            [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
+            return @{username=$username; password=$passwordPlain}
+        } catch {
+            # If failed to read, delete corrupted file
+            Remove-Item $credFile -ErrorAction SilentlyContinue
+        }
+    }
+    # Prompt for creds if no file or error
+    $username = Read-Host "👤 Enter Username"
+    $passwordSecure = Read-Host "🔒 Enter Password" -AsSecureString
+    # Save creds encrypted
+    $credToSave = New-Object -TypeName PSObject -Property @{
+        UserName = $username
+        Password = $passwordSecure
+    }
+    $credToSave | Export-Clixml -Path $credFile
+    $ptr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($passwordSecure)
+    $passwordPlain = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
+    [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
+    return @{username=$username; password=$passwordPlain}
+}
+
+# Get credentials (auto-login or prompt)
+$creds = Get-Credentials
+$username = $creds.username
+$passwordPlain = $creds.password
+
+# Get HWID
+$hwid = (Get-WmiObject Win32_ComputerSystemProduct).UUID
+
+# Prepare login payload (no secret)
+$payload = @{
+    type     = "login"
+    username = $username
+    pass     = $passwordPlain
+    hwid     = $hwid
+    name     = $appName
+    ownerid  = $ownerId
+    version  = $appVersion
+} | ConvertTo-Json -Compress
+
+$web = New-Object System.Net.WebClient
+$web.Headers.Add("Content-Type", "application/json")
+
+try {
+    $responseRaw = $web.UploadString($url, $payload)
+    $response = $responseRaw | ConvertFrom-Json
+
+    if ($response.success -eq $true) {
+        Write-Host "✅ Login successful! Welcome $username." -ForegroundColor Green
+        
+
 # Find explorer.exe process
 $proc = Get-Process explorer -ErrorAction Stop | Select-Object -First 1
 $targetPID = $proc.Id  # Use different variable name
@@ -67,4 +153,16 @@ Write-Host "Injection successful."
 
 if ($hProc -ne [IntPtr]::Zero) {
     [Injector]::CloseHandle($hProc) | Out-Null
+}
+
+    } else {
+        Write-Host "❌ Login failed: $($response.message)" -ForegroundColor Red
+        # On failure, delete saved creds so user can retry manually next time
+        if (Test-Path $credFile) { Remove-Item $credFile -ErrorAction SilentlyContinue }
+        exit
+    }
+}
+catch {
+    Write-Host "⚠️ Connection error: $($_.Exception.Message)" -ForegroundColor Yellow
+    exit
 }
