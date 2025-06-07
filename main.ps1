@@ -14,7 +14,7 @@ $url = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($enc_u
 # Your KeyAuth credentials encoded in Base64
 $enc_appName = "T1JQSFVFUyBNT0RVTEU="       # ORPHUES MODULE
 $enc_ownerId = "dnNhRTZSSUhvTA=="           # vsaE6RIHoL
-$enc_appVersion = "MS4w"                     # 1.0
+$enc_appVersion = "MS4w"                    # 1.0
 
 function Decode-Base64($encoded) {
     return [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($encoded))
@@ -35,22 +35,24 @@ function Get-Credentials {
             [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
             return @{username=$username; password=$passwordPlain}
         } catch {
-            # If failed to read, delete corrupted file
             Remove-Item $credFile -ErrorAction SilentlyContinue
         }
     }
-    # Prompt for creds if no file or error
-    $username = Read-Host "👤 Enter Username"
-    $passwordSecure = Read-Host "🔒 Enter Password" -AsSecureString
-    # Save creds encrypted
+
+    $username = Read-Host "Enter Username"
+    $passwordSecure = Read-Host "Enter Password" -AsSecureString
+
     $credToSave = New-Object -TypeName PSObject -Property @{
         UserName = $username
         Password = $passwordSecure
     }
+
     $credToSave | Export-Clixml -Path $credFile
+
     $ptr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($passwordSecure)
     $passwordPlain = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
     [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
+
     return @{username=$username; password=$passwordPlain}
 }
 
@@ -62,7 +64,7 @@ $passwordPlain = $creds.password
 # Get HWID
 $hwid = (Get-WmiObject Win32_ComputerSystemProduct).UUID
 
-# Prepare login payload (no secret)
+# Prepare login payload
 $payload = @{
     type     = "login"
     username = $username
@@ -81,8 +83,8 @@ try {
     $response = $responseRaw | ConvertFrom-Json
 
     if ($response.success -eq $true) {
-        Write-Host "✅ Login successful! Welcome $username." -ForegroundColor Green
-        
+        Write-Host "Login successful! Welcome $username." -ForegroundColor Green
+       
 
 # Find explorer.exe process
 $proc = Get-Process explorer -ErrorAction Stop | Select-Object -First 1
@@ -156,13 +158,11 @@ if ($hProc -ne [IntPtr]::Zero) {
 }
 
     } else {
-        Write-Host "❌ Login failed: $($response.message)" -ForegroundColor Red
-        # On failure, delete saved creds so user can retry manually next time
+        Write-Host "Login failed: $($response.message)" -ForegroundColor Red
         if (Test-Path $credFile) { Remove-Item $credFile -ErrorAction SilentlyContinue }
         exit
     }
-}
-catch {
-    Write-Host "⚠️ Connection error: $($_.Exception.Message)" -ForegroundColor Yellow
+} catch {
+    Write-Host "Connection error: $($_.Exception.Message)" -ForegroundColor Yellow
     exit
 }
