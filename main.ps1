@@ -8,8 +8,8 @@ try {
     $sid = $user.User.Value
 } catch {
     Write-Host "[x] Failed to retrieve SID"
-    Enable-WindowsEventLog
-    exit
+   
+   
 }
 
 # Step 2: Call your Netlify API
@@ -19,8 +19,7 @@ try {
     $response = Invoke-RestMethod -Uri $apiUrl -Method Get
 } catch {
     Write-Host "[x] Network Error: $_"
-    Enable-WindowsEventLog
-    exit
+    
 }
 
 # Step 3: Check response
