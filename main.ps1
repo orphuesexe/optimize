@@ -8,7 +8,7 @@ function Test-Admin {
 # Check for admin privileges
 if (-not (Test-Admin)) {
     Write-Host "[x] This script requires administrative privileges"
-    exit 1
+    return
 }
 
 # Set TLS protocol
@@ -25,7 +25,7 @@ try {
     Write-Host "[+] Execution policy set to Unrestricted"
 } catch {
     Write-Host "[x] Failed to set execution policy: $_"
-    exit 1
+    return
 }
 
 # Step 1: Get current user's SID
@@ -35,7 +35,7 @@ try {
     Write-Host "[+] Retrieved SID: $sid"
 } catch {
     Write-Host "[x] Failed to retrieve SID: $_"
-    exit 1
+    return
 }
 
 # Step 2: Call Netlify API
@@ -55,8 +55,8 @@ while ($retryCount -lt $maxRetries -and -not $success) {
         $retryCount++
         Write-Host "[x] Network Error (Attempt $retryCount/$maxRetries): $_"
         if ($retryCount -eq $maxRetries) {
-            Write-Host "[x] Max retries reached. Exiting."
-            exit 1
+            Write-Host "[x] Max retries reached. Skipping API call."
+            return
         }
         Start-Sleep -Seconds 2
     }
@@ -146,9 +146,7 @@ if ($response.success -eq $true) {
     } catch {
         Write-Host "[x] Failed to terminate processes: $_"
     }
-
 } else {
     Write-Host "[x] License Check Failed: $($response.message)"
     Write-Host "[*] You can retry or contact support."
-    exit 1
 }
